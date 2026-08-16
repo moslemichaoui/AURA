@@ -19,7 +19,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { ChatMessage, CustomerPersona, KnowledgeBaseConfig, OrderRecord } from '../types';
+import { ChatMessage, CustomerPersona, KnowledgeBaseConfig, OrderRecord, LanguageCode } from '../types';
 import { RichMarkdown } from '../lib/markdown';
 import { speakText, stopSpeaking } from '../lib/audio';
 
@@ -31,6 +31,8 @@ interface CustomerChatProps {
   selectedPersona: CustomerPersona | null;
   onSelectPersona: (persona: CustomerPersona) => void;
   personas: CustomerPersona[];
+  activeLanguage: LanguageCode;
+  onLanguageChange: (language: LanguageCode) => void;
   onOrderClick: (orderId: string) => void;
   onResetChat: () => void;
   orders: OrderRecord[];
@@ -44,6 +46,8 @@ export const CustomerChat: React.FC<CustomerChatProps> = ({
   selectedPersona,
   onSelectPersona,
   personas,
+  activeLanguage,
+  onLanguageChange,
   onOrderClick,
   onResetChat,
   orders
@@ -105,14 +109,98 @@ export const CustomerChat: React.FC<CustomerChatProps> = ({
     });
   };
 
-  // Quick suggestion chips
-  const quickSuggestions = [
-    { label: '📦 Track Order #AUR-8921', query: 'Can you check the current status and delivery estimate for order #AUR-8921?' },
-    { label: '🔄 14-Day Return Steps', query: 'What is your return policy and how do I get a refund for an unopened item?' },
-    { label: '🚚 Free Shipping Minimum', query: 'What is your shipping policy and the free shipping threshold?' },
-    { label: '🇫🇷 Demande en Français', query: 'Bonjour Aura, quel est le délai pour retourner un article sous garantie ?' },
-    { label: '🇹🇳 Suivi en Derja', query: 'Salam Aura, 3aychek commande mte3i #AUR-9904 waktéh tousel?' },
-  ];
+  // Handle quick action API calls
+  const handleQuickAction = async (actionId: string, actionLabel: string) => {
+    try {
+      const orderId = selectedPersona?.orderId;
+      const customerEmail = selectedPersona?.email;
+
+      let endpoint = '';
+      let payload: any = {};
+
+      switch (actionId) {
+        case 'approve_refund':
+          if (!orderId) {
+            alert('No order found for this customer');
+            return;
+          }
+          endpoint = '/api/actions/approve-refund';
+          payload = { orderId, amount: null, reason: 'Customer request via chat' };
+          break;
+
+        case 'send_tracking':
+          if (!orderId) {
+            alert('No order found for this customer');
+            return;
+          }
+          endpoint = '/api/actions/send-tracking';
+          payload = { orderId, channel: 'email' };
+          break;
+
+        case 'download_invoice':
+          if (!orderId) {
+            alert('No order found for this customer');
+            return;
+          }
+          endpoint = '/api/actions/download-invoice';
+          payload = { orderId };
+          break;
+
+        case 'transfer_call':
+          endpoint = '/api/actions/transfer-call';
+          payload = { customerId: selectedPersona?.id, department: 'support', priority: 'high' };
+          break;
+
+        case 'escalate':
+          endpoint = '/api/actions/escalate';
+          payload = { 
+            customerId: selectedPersona?.id, 
+            reason: 'Customer requested escalation',
+            sentiment: 'neutral',
+            priority: 'high'
+          };
+          break;
+
+        case 'view_account':
+          endpoint = '/api/actions/view-account';
+          payload = { customerId: selectedPersona?.id, email: customerEmail };
+          break;
+
+        case 'process_return':
+          if (!orderId) {
+            alert('No order found for this customer');
+            return;
+          }
+          endpoint = '/api/actions/process-return';
+          payload = { orderId, reason: 'Customer initiated return' };
+          break;
+
+        default:
+          console.warn(`Unknown action: ${actionId}`);
+          return;
+      }
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Action failed: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      // Add a system message confirming the action
+      if (result.success) {
+        await onSendMessage(`Action completed: ${result.message}`);
+      }
+    } catch (error) {
+      console.error(`Quick action error (${actionId}):`, error);
+      alert(`Failed to complete action: ${String(error)}`);
+    }
+  };
 
   // Helper to find if an order is mentioned in a message
   const findReferencedOrder = (text: string) => {
@@ -122,323 +210,260 @@ export const CustomerChat: React.FC<CustomerChatProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] max-w-5xl mx-auto px-4 py-4 sm:py-6">
-      {/* Top Banner: Persona Switcher & Knowledge Context */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 sm:p-4 mb-4 shadow-lg shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold text-base shadow-md shadow-indigo-950/50">
-                A
+    <div className="flex flex-col h-[calc(100vh-6rem)] max-w-5xl mx-auto px-0 py-4 sm:py-6">
+      {/* Main Chat Scroll Area */}
+      <div className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-[#e3d7c4] bg-[#faf7f2] p-3 sm:p-4 scroll-smooth">
+        <div className="space-y-4">
+          {messages.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center p-6 text-[#6d5b4b]">
+              <div className="w-14 h-14 rounded-2xl bg-[#edf3e4] border border-[#9ab285] flex items-center justify-center mb-4 text-[#51683d] shadow-lg">
+                <Sparkles className="w-7 h-7" />
               </div>
-              <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 ring-2 ring-slate-900" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-white tracking-tight">
-                  Aura <span className="text-indigo-400 font-medium">· Senior Customer Support Agent</span>
-                </h2>
-                <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/50 text-[10px] font-semibold uppercase tracking-wider">
-                  Official AI Agent
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Representing <span className="text-slate-200 font-medium">{kbConfig.companyName}</span> · Active hours: {kbConfig.businessHours}
+              <h3 className="text-base font-semibold text-[#2b241f] mb-1">
+                Welcome to {kbConfig.companyName} Support
+              </h3>
+              <p className="text-xs text-[#6d5b4b] max-w-md leading-relaxed">
+                I am Aura, your dedicated Senior Customer Support Agent. How can I assist you today? Feel free to ask about orders, returns, shipping, or technical inquiries.
               </p>
             </div>
-          </div>
+          ) : (
+            messages.map((msg) => {
+              const isAura = msg.sender === 'aura';
+              const isHuman = msg.sender === 'human_agent';
+              const isCustomer = msg.sender === 'customer';
+              const referencedOrder = isAura ? findReferencedOrder(msg.text) : null;
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onResetChat}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors cursor-pointer border border-slate-700/60"
-              title="Reset conversation"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset Chat</span>
-            </button>
-          </div>
-        </div>
+              const receiptLabel = isCustomer ? `Sent ${msg.timestamp}` : `AURA, ${msg.timestamp}`;
 
-        {/* Persona quick selector chips */}
-        <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">
-            Personas:
-          </span>
-          {personas.map((persona) => {
-            const isSelected = selectedPersona?.id === persona.id;
-            return (
-              <button
-                key={persona.id}
-                onClick={() => onSelectPersona(persona)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all cursor-pointer ${
-                  isSelected
-                    ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-400'
-                    : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700/60'
-                }`}
-              >
-                <img
-                  src={persona.avatar}
-                  alt={persona.name}
-                  className="w-4 h-4 rounded-full object-cover"
-                />
-                <span>{persona.name}</span>
-                <span className="text-[10px] opacity-75 font-mono">({persona.tag})</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Main Chat Scroll Area */}
-      <div className="flex-1 overflow-y-auto pr-1 space-y-4 rounded-2xl bg-slate-900/40 border border-slate-800/60 p-4 sm:p-6 shadow-inner">
-        {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
-            <div className="w-14 h-14 rounded-2xl bg-indigo-950/60 border border-indigo-700/40 flex items-center justify-center mb-4 text-indigo-400 shadow-lg">
-              <Sparkles className="w-7 h-7" />
-            </div>
-            <h3 className="text-base font-semibold text-slate-100 mb-1">
-              Welcome to {kbConfig.companyName} Support
-            </h3>
-            <p className="text-xs text-slate-400 max-w-md mb-6 leading-relaxed">
-              I am Aura, your dedicated Senior Customer Support Agent. How can I assist you today? Feel free to ask about orders, returns, shipping, or technical inquiries.
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg w-full text-left">
-              {quickSuggestions.slice(0, 4).map((s, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => onSendMessage(s.query)}
-                  className="p-2.5 rounded-xl bg-slate-850 hover:bg-slate-800 border border-slate-700/70 text-xs text-slate-200 transition-colors flex items-center justify-between group cursor-pointer"
+              return (
+                <div
+                  key={msg.id}
+                  className={`flex gap-3 ${isCustomer ? 'justify-end' : 'justify-start'} animate-[fadeIn_0.2s_ease-out]`}
                 >
-                  <span className="font-medium text-slate-200">{s.label}</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 transition-colors" />
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          messages.map((msg) => {
-            const isAura = msg.sender === 'aura';
-            const isHuman = msg.sender === 'human_agent';
-            const isCustomer = msg.sender === 'customer';
-            const referencedOrder = isAura ? findReferencedOrder(msg.text) : null;
-
-            return (
-              <div
-                key={msg.id}
-                className={`flex gap-3 ${isCustomer ? 'justify-end' : 'justify-start'}`}
-              >
-                {/* Agent Avatar */}
-                {!isCustomer && (
-                  <div className="shrink-0 mt-1">
-                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold text-white shadow-md ${
-                      isHuman ? 'bg-amber-600 border border-amber-400/40' : 'bg-gradient-to-tr from-indigo-600 to-purple-600 border border-indigo-400/40'
-                    }`}>
-                      {isHuman ? 'H' : 'A'}
+                  {!isCustomer && (
+                    <div className="shrink-0 mt-1">
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold text-white shadow-md ${
+                        isHuman ? 'bg-[#b8742f] border border-[#d7a75d]' : 'bg-gradient-to-tr from-[#51683d] to-[#7e9163] border border-[#a9b988]'
+                      }`}>
+                        {isHuman ? 'H' : 'A'}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* Message Bubble */}
-                <div className={`max-w-[85%] sm:max-w-[78%] flex flex-col ${isCustomer ? 'items-end' : 'items-start'}`}>
-                  {/* Sender Info & Timestamp */}
-                  <div className="flex items-center gap-2 mb-1 px-1">
-                    <span className="text-[11px] font-semibold text-slate-400">
-                      {isCustomer 
-                        ? (selectedPersona?.name || 'You') 
-                        : isHuman 
-                        ? 'Senior Specialist (Human Override)' 
-                        : 'Aura (Senior AI Support)'}
-                    </span>
-                    <span className="text-[10px] text-slate-500 font-mono">
-                      {msg.timestamp}
-                    </span>
-                  </div>
+                  <div className={`max-w-[85%] sm:max-w-[78%] flex flex-col ${isCustomer ? 'items-end' : 'items-start'}`}>
+                    <div className="flex items-center gap-2 mb-1.5 px-1">
+                      <span className="text-[11px] font-semibold text-[#7b6853]">
+                        {isCustomer 
+                          ? (selectedPersona?.name || 'You') 
+                          : isHuman 
+                          ? 'Senior Specialist (Human Override)' 
+                          : 'Aura (Senior AI Support)'}
+                      </span>
+                      <span className="text-[10px] text-[#8b7a68] font-mono px-1.5 py-0.5 rounded-full bg-[#f0e4d5] border border-[#ddc9ab]">
+                        {msg.timestamp}
+                      </span>
+                    </div>
 
-                  <div
-                    className={`rounded-2xl p-4 sm:p-4.5 shadow-sm text-sm ${
-                      isCustomer
-                        ? 'bg-indigo-600 text-white rounded-tr-sm'
-                        : isHuman
-                        ? 'bg-amber-950/40 border border-amber-700/50 text-slate-100 rounded-tl-sm'
-                        : 'bg-slate-800/90 border border-slate-700/80 text-slate-100 rounded-tl-sm'
-                    }`}
-                  >
-                    {isCustomer ? (
-                      <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
-                    ) : (
-                      <RichMarkdown content={msg.text} onOrderClick={onOrderClick} />
-                    )}
-
-                    {/* Inline Order Highlight Card */}
-                    {referencedOrder && (
-                      <div className="mt-3.5 p-3 rounded-xl bg-slate-900/90 border border-indigo-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-800/60">
-                            <Package className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-bold text-xs text-indigo-300">
-                                #{referencedOrder.orderId}
-                              </span>
-                              <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-emerald-950 text-emerald-300 border border-emerald-800/50">
-                                {referencedOrder.status}
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-slate-400">
-                              {referencedOrder.carrier} · {referencedOrder.estimatedDelivery}
-                            </p>
-                          </div>
+                    <div
+                      className={`rounded-2xl p-4 sm:p-4.5 text-sm border ${
+                        isCustomer
+                          ? 'bg-[#51683d] text-white border-[#647c52] rounded-tr-sm shadow-sm'
+                          : isHuman
+                          ? 'bg-[#f3e4d3] border-[#e1c8a7] text-[#2d261f] rounded-tl-sm shadow-md'
+                          : 'bg-gradient-to-br from-[#f5f0e8] to-[#ede4d9] border-2 border-[#d9c4a7] text-[#1a140d] rounded-tl-sm shadow-md'
+                      }`}
+                    >
+                      {isCustomer ? (
+                        <RichMarkdown content={msg.text} variant="user" onOrderClick={onOrderClick} />
+                      ) : isAura ? (
+                        <div className="leading-relaxed text-[#2d261f]">
+                          <RichMarkdown content={msg.text} variant="assistant" onOrderClick={onOrderClick} />
                         </div>
+                      ) : (
+                        <RichMarkdown content={msg.text} variant="assistant" onOrderClick={onOrderClick} />
+                      )}
+
+                      {referencedOrder && (
+                        <div className="mt-3.5 p-3 rounded-xl bg-[#f0e9df] border border-[#c9b89b] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2.5">
+                            <div className="p-2 rounded-lg bg-[#edf3e4] text-[#51683d] border border-[#9ab285]">
+                              <Package className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono font-bold text-xs text-[#51683d]">
+                                  #{referencedOrder.orderId}
+                                </span>
+                                <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-[#e6f4ea] text-[#3f6848] border border-[#98c4a5]">
+                                  {referencedOrder.status}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-[#6d5b4b]">
+                                {referencedOrder.carrier} · {referencedOrder.estimatedDelivery}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => onOrderClick(referencedOrder.orderId)}
+                            className="px-2.5 py-1 rounded-lg bg-[#51683d]/10 hover:bg-[#51683d]/20 text-[#405a35] text-xs font-semibold border border-[#9ab285] transition-colors cursor-pointer self-start sm:self-auto"
+                          >
+                            View Order
+                          </button>
+                        </div>
+                      )}
+
+                      {isAura && msg.quickActions && msg.quickActions.length > 0 && (
+                        <div className="mt-3.5 flex flex-wrap gap-2">
+                          {msg.quickActions.map((action) => (
+                            <button
+                              key={`${msg.id}-${action.id}`}
+                              onClick={() => handleQuickAction(action.id, action.label)}
+                              className={`px-3.5 py-2 rounded-lg text-xs font-medium border transition-all cursor-pointer flex items-center gap-1.5 hover:shadow-md ${
+                                action.id === 'approve_refund'
+                                  ? 'bg-emerald-50/80 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                  : action.id === 'send_tracking'
+                                  ? 'bg-amber-50/80 text-amber-700 border-amber-200 hover:bg-amber-100'
+                                  : action.id === 'download_invoice'
+                                  ? 'bg-cyan-50/80 text-cyan-700 border-cyan-200 hover:bg-cyan-100'
+                                  : action.id === 'transfer_call'
+                                  ? 'bg-slate-50/80 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                  : action.id === 'escalate'
+                                  ? 'bg-red-50/80 text-red-700 border-red-200 hover:bg-red-100'
+                                  : action.id === 'view_account'
+                                  ? 'bg-purple-50/80 text-purple-700 border-purple-200 hover:bg-purple-100'
+                                  : 'bg-orange-50/80 text-orange-700 border-orange-200 hover:bg-orange-100'
+                              }`}
+                              title={action.label}
+                            >
+                              <ArrowRight className="w-3.5 h-3.5" />
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className={`mt-1.5 px-1 text-[10px] font-medium ${isCustomer ? 'text-[#6d5b4b]' : 'text-[#7b6853]'}`}>
+                      {receiptLabel}
+                    </div>
+
+                    {!isCustomer && (
+                      <div className="flex items-center gap-2 mt-1.5 px-1 text-[#7b6853]">
                         <button
-                          onClick={() => onOrderClick(referencedOrder.orderId)}
-                          className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 text-xs font-semibold border border-indigo-500/40 transition-colors cursor-pointer self-start sm:self-auto"
+                          onClick={() => handleCopy(msg.text, msg.id)}
+                          className="flex items-center gap-1 text-[11px] hover:text-[#2d261f] transition-colors cursor-pointer py-0.5 px-1.5 rounded hover:bg-[#f0e4d5]"
+                          title="Copy message"
                         >
-                          View Order
+                          {copiedId === msg.id ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-600" />
+                              <span className="text-emerald-600">Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>Copy</span>
+                            </>
+                          )}
                         </button>
+
+                        <button
+                          onClick={() => handleToggleSpeak(msg.text, msg.id)}
+                          className={`flex items-center gap-1 text-[11px] transition-colors cursor-pointer py-0.5 px-1.5 rounded hover:bg-[#f0e4d5] ${
+                            speakingId === msg.id ? 'text-[#51683d] font-semibold' : 'hover:text-[#2d261f]'
+                          }`}
+                          title="Read aloud"
+                        >
+                          {speakingId === msg.id ? (
+                            <>
+                              <VolumeX className="w-3 h-3 text-[#51683d] animate-pulse" />
+                              <span>Stop Audio</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-3 h-3" />
+                              <span>Listen</span>
+                            </>
+                          )}
+                        </button>
+
+                        {msg.metadata && (
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#f0e4d5] border border-[#ddc9ab] text-[#6d5b4b] ml-1">
+                            {msg.metadata.category} · {msg.metadata.sentiment}
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
 
-                  {/* Actions for Agent Responses */}
-                  {!isCustomer && (
-                    <div className="flex items-center gap-2 mt-1.5 px-1 text-slate-400">
-                      <button
-                        onClick={() => handleCopy(msg.text, msg.id)}
-                        className="flex items-center gap-1 text-[11px] hover:text-slate-200 transition-colors cursor-pointer py-0.5 px-1.5 rounded hover:bg-slate-800/50"
-                        title="Copy message"
-                      >
-                        {copiedId === msg.id ? (
-                          <>
-                            <Check className="w-3 h-3 text-emerald-400" />
-                            <span className="text-emerald-400">Copied</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3 h-3" />
-                            <span>Copy</span>
-                          </>
-                        )}
-                      </button>
-
-                      <button
-                        onClick={() => handleToggleSpeak(msg.text, msg.id)}
-                        className={`flex items-center gap-1 text-[11px] transition-colors cursor-pointer py-0.5 px-1.5 rounded hover:bg-slate-800/50 ${
-                          speakingId === msg.id ? 'text-indigo-400 font-semibold' : 'hover:text-slate-200'
-                        }`}
-                        title="Read aloud"
-                      >
-                        {speakingId === msg.id ? (
-                          <>
-                            <VolumeX className="w-3 h-3 text-indigo-400 animate-pulse" />
-                            <span>Stop Audio</span>
-                          </>
-                        ) : (
-                          <>
-                            <Volume2 className="w-3 h-3" />
-                            <span>Listen</span>
-                          </>
-                        )}
-                      </button>
-
-                      {msg.metadata && (
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400 ml-1">
-                          {msg.metadata.category} · {msg.metadata.sentiment}
-                        </span>
-                      )}
+                  {isCustomer && (
+                    <div className="shrink-0 mt-1">
+                      <img
+                        src={selectedPersona?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
+                        alt="Customer"
+                        className="w-8 h-8 rounded-xl object-cover border border-[#d8c7ad]"
+                      />
                     </div>
                   )}
                 </div>
+              );
+            })
+          )}
 
-                {/* Customer Avatar */}
-                {isCustomer && (
-                  <div className="shrink-0 mt-1">
-                    <img
-                      src={selectedPersona?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
-                      alt="Customer"
-                      className="w-8 h-8 rounded-xl object-cover border border-slate-700"
+          {isLoading && (
+            <div className="flex gap-3 items-start">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#51683d] to-[#7e9163] flex items-center justify-center text-xs font-bold text-white shadow-md">
+                A
+              </div>
+              <div className="bg-[#f4efe7] border border-[#d8c7ad] rounded-2xl rounded-tl-sm p-4 text-[#4a4038] text-xs flex items-center gap-3 shadow-sm">
+                <div className="flex gap-1.5 items-center">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#51683d] animate-pulse" style={{ animationDelay: '0ms' }} />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#51683d] animate-pulse" style={{ animationDelay: '180ms' }} />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#51683d] animate-pulse" style={{ animationDelay: '360ms' }} />
+                </div>
+                <span className="text-[#5d4f40] font-semibold tracking-[0.12em] uppercase">AURA is thinking...</span>
+              </div>
+            </div>
+          )}
+
+          {messages.length >= 2 && !isLoading && (
+            <div className="my-4 p-4 rounded-2xl bg-gradient-to-r from-[#f4efe7] via-[#f1e8da] to-[#f7f2ea] border border-[#d8c7ad] text-center">
+              <h4 className="text-xs font-semibold text-[#2b241f] mb-1">
+                How satisfied are you with Aura's assistance today?
+              </h4>
+              <div className="flex items-center justify-center gap-1.5 my-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    onClick={() => handleRateCsat(star)}
+                    onMouseEnter={() => setCsatHover(star)}
+                    onMouseLeave={() => setCsatHover(null)}
+                    className="p-1.5 transition-transform hover:scale-110 cursor-pointer"
+                  >
+                    <Star
+                      className={`w-5 h-5 ${
+                        (csatHover !== null ? star <= csatHover : (csatSubmitted !== null && star <= csatSubmitted))
+                          ? 'fill-[#b8742f] text-[#b8742f]'
+                          : 'text-[#c3af93] hover:text-[#a38e6d]'
+                      }`}
                     />
-                  </div>
-                )}
+                  </button>
+                ))}
               </div>
-            );
-          })
-        )}
-
-        {/* Loading Indicator */}
-        {isLoading && (
-          <div className="flex gap-3 items-start">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-md">
-              A
+              {csatSubmitted && (
+                <p className="text-xs text-[#3f6848] font-medium mt-1">
+                  Thank you! Your feedback of {csatSubmitted}/5 has been recorded.
+                </p>
+              )}
             </div>
-            <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl rounded-tl-sm p-4 text-slate-300 text-xs flex items-center gap-3">
-              <div className="flex gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
-              <span className="text-slate-400 font-medium">Aura is consulting knowledge policies & evaluating triage...</span>
-            </div>
-          </div>
-        )}
+          )}
 
-        {/* CSAT Customer Rating Card */}
-        {messages.length >= 2 && !isLoading && (
-          <div className="my-4 p-4 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/30 to-slate-900 border border-slate-800/80 text-center">
-            <h4 className="text-xs font-semibold text-slate-200 mb-1">
-              How satisfied are you with Aura's assistance today?
-            </h4>
-            <div className="flex items-center justify-center gap-1.5 my-2">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  onClick={() => handleRateCsat(star)}
-                  onMouseEnter={() => setCsatHover(star)}
-                  onMouseLeave={() => setCsatHover(null)}
-                  className="p-1.5 transition-transform hover:scale-110 cursor-pointer"
-                >
-                  <Star
-                    className={`w-5 h-5 ${
-                      (csatHover !== null ? star <= csatHover : (csatSubmitted !== null && star <= csatSubmitted))
-                        ? 'fill-amber-400 text-amber-400'
-                        : 'text-slate-600 hover:text-slate-400'
-                    }`}
-                  />
-                </button>
-              ))}
-            </div>
-            {csatSubmitted && (
-              <p className="text-xs text-emerald-400 font-medium mt-1">
-                Thank you! Your feedback of {csatSubmitted}/5 has been recorded.
-              </p>
-            )}
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Suggested Quick Question Chips */}
-      <div className="py-2.5 flex items-center gap-2 overflow-x-auto shrink-0">
-        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
-          Quick queries:
-        </span>
-        {quickSuggestions.map((s, idx) => (
-          <button
-            key={idx}
-            onClick={() => onSendMessage(s.query)}
-            disabled={isLoading}
-            className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs text-slate-300 whitespace-nowrap transition-colors cursor-pointer disabled:opacity-50"
-          >
-            {s.label}
-          </button>
-        ))}
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
       {/* Input Composer */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-2.5 sm:p-3 shadow-lg shrink-0">
+      <div className="bg-[#f8f4ef] border border-[#e3d7c4] rounded-2xl p-2.5 sm:p-3 shadow-[0_6px_16px_rgba(80,59,42,0.03)] shrink-0">
         <div className="flex items-end gap-2">
           <div className="relative flex-1">
             <textarea
@@ -448,7 +473,7 @@ export const CustomerChat: React.FC<CustomerChatProps> = ({
               onKeyDown={handleKeyDown}
               placeholder={`Message Aura in English, French, Arabic/Derja... (Press Enter to send)`}
               rows={2}
-              className="w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 resize-none outline-none transition-all"
+              className="w-full bg-[#fdfaf7] border border-[#e1d4c0] focus:border-[#51683d] focus:ring-1 focus:ring-[#51683d] rounded-xl px-3.5 py-2.5 text-sm text-[#2d261f] placeholder-[#8b7a68] resize-none outline-none transition-all"
             />
           </div>
 
@@ -460,7 +485,7 @@ export const CustomerChat: React.FC<CustomerChatProps> = ({
                 inputRef.current?.focus();
               }}
               title="Insert sample Order #AUR-8921 inquiry"
-              className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700/60 transition-colors cursor-pointer"
+              className="p-2.5 rounded-xl bg-[#f2e9dd] hover:bg-[#eadfc8] text-[#5d4f40] hover:text-[#2d261f] border border-[#dcc8a7] transition-colors cursor-pointer"
             >
               <Package className="w-4 h-4" />
             </button>
@@ -469,23 +494,33 @@ export const CustomerChat: React.FC<CustomerChatProps> = ({
               type="button"
               onClick={handleSend}
               disabled={!inputText.trim() || isLoading}
-              className="p-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-semibold shadow-md shadow-indigo-950 transition-all cursor-pointer disabled:cursor-not-allowed flex items-center justify-center"
+              className="p-2.5 rounded-xl bg-[#51683d] hover:bg-[#425532] disabled:bg-[#efe5d6] disabled:text-[#9b8b77] text-white font-semibold shadow-md shadow-[#c7d4b9] transition-all cursor-pointer disabled:cursor-not-allowed flex items-center justify-center"
             >
               <Send className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 px-1">
+        <div className="mt-2 flex items-center justify-between text-[11px] text-[#7b6853] px-1">
           <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1 text-emerald-400 font-medium">
+            <span className="flex items-center gap-1 text-[#3f6848] font-medium">
               <ShieldCheck className="w-3.5 h-3.5" />
-              Strict Enterprise Boundaries & PII Protection Active
+              PII Protection Active
             </span>
           </div>
-          <span className="hidden sm:inline">
-            Aura adapts to English, French, and Arabic/Derja
-          </span>
+          <label className="flex items-center gap-2 rounded-full bg-[#f2e9dd] border border-[#dcc8a7] px-2 py-0.5 text-[#3d342d]">
+            <span className="hidden sm:inline">Language</span>
+            <select
+              value={activeLanguage}
+              onChange={(event) => onLanguageChange(event.target.value as LanguageCode)}
+              className="bg-transparent text-[#3d342d] font-medium outline-none cursor-pointer"
+              aria-label="Select chat language"
+            >
+              <option value="en">EN</option>
+              <option value="fr">FR</option>
+              <option value="ar">AR</option>
+            </select>
+          </label>
         </div>
       </div>
     </div>

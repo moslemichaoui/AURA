@@ -1,43 +1,89 @@
 import express, { Request, Response } from 'express';
 import { generateAuraResponse, generateAuraStream, parseDualOutput } from './geminiService';
-import { MOCK_ORDERS } from '../src/data/initialData';
-import { OrderRecord } from '../src/types';
+import { buildEscalationSummary, fetchChatHistory, fetchCustomerProfile, fetchOrders, getSqlStatus, persistChatMessage, searchKnowledgeBase } from './sqlServer';
 
 const router = express.Router();
 router.use(express.json());
 
-// In-memory orders store for simulation
-let ordersDb: OrderRecord[] = [...MOCK_ORDERS];
+router.get('/status', async (_req: Request, res: Response) => {
+  const status = await getSqlStatus();
+  res.json({
+    ...status,
+    service: 'AURA Call Center API',
+    timestamp: new Date().toISOString(),
+  });
+});
 
-// 1. Standard Chat Message Endpoint
+router.get('/chat/history', async (_req: Request, res: Response) => {
+  const history = await fetchChatHistory();
+  res.json(history);
+});
+
 router.post('/chat/message', async (req: Request, res: Response) => {
   try {
-    const { conversationHistory, customerMessage, kbConfig, customerInfo } = req.body;
+    const { conversationHistory, customerMessage, kbConfig, customerInfo, channel, language } = req.body;
 
     if (!customerMessage && (!conversationHistory || conversationHistory.length === 0)) {
       res.status(400).json({ error: 'Customer message is required' });
       return;
     }
 
-    const result = await generateAuraResponse({
+    const ordersDb = await fetchOrders();
+    const generated = await generateAuraResponse({
       conversationHistory: conversationHistory || [],
       customerMessage: customerMessage || '',
       kbConfig: kbConfig || {},
       knownOrders: ordersDb,
-      customerInfo: customerInfo
+      customerInfo: customerInfo,
+      language: language || 'en',
     });
 
-    res.json(result);
+    const safeMetadata: Record<string, unknown> = generated.metadata
+      ? {
+          category: generated.metadata.category,
+          priority: generated.metadata.priority,
+          sentiment: generated.metadata.sentiment,
+          action_required: generated.metadata.action_required,
+          confidence_score: generated.metadata.confidence_score,
+          channel: channel || 'Live Chat',
+        }
+      : {};
+
+    if (customerInfo?.email) {
+      const crmProfile = await fetchCustomerProfile(customerInfo.email);
+      if (crmProfile) {
+        generated.customerProfile = crmProfile;
+      }
+    }
+
+    await persistChatMessage({
+      sender: 'customer',
+      text: customerMessage || '',
+      channel: channel || 'Live Chat',
+      customerName: customerInfo?.name,
+      customerEmail: customerInfo?.email,
+      metadata: safeMetadata,
+    });
+
+    await persistChatMessage({
+      sender: 'aura',
+      text: generated.customerResponse || generated.rawText || '',
+      channel: channel || 'Live Chat',
+      customerName: customerInfo?.name,
+      customerEmail: customerInfo?.email,
+      metadata: safeMetadata,
+    });
+
+    res.json(generated);
   } catch (error: any) {
     console.error('Error generating Aura response:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: error.message || 'Internal server error processing AI response',
-      details: String(error)
+      details: String(error),
     });
   }
 });
 
-// 2. Streaming Chat Message Endpoint (SSE)
 router.post('/chat/stream', async (req: Request, res: Response) => {
   try {
     const { conversationHistory, customerMessage, kbConfig, customerInfo } = req.body;
@@ -46,16 +92,16 @@ router.post('/chat/stream', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
+    const ordersDb = await fetchOrders();
     const stream = generateAuraStream({
       conversationHistory: conversationHistory || [],
       customerMessage: customerMessage || '',
       kbConfig: kbConfig || {},
       knownOrders: ordersDb,
-      customerInfo: customerInfo
+      customerInfo: customerInfo,
     });
 
     let fullText = '';
-
     for await (const chunk of stream) {
       fullText += chunk;
       res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
@@ -71,14 +117,15 @@ router.post('/chat/stream', async (req: Request, res: Response) => {
   }
 });
 
-// 3. Simulated Orders Lookup & Management
-router.get('/orders', (req: Request, res: Response) => {
-  res.json(ordersDb);
+router.get('/orders', async (_req: Request, res: Response) => {
+  const orders = await fetchOrders();
+  res.json(orders);
 });
 
-router.get('/orders/:id', (req: Request, res: Response) => {
+router.get('/orders/:id', async (req: Request, res: Response) => {
   const query = req.params.id.toUpperCase();
-  const order = ordersDb.find(o => o.orderId.toUpperCase() === query || o.trackingNumber.toUpperCase() === query);
+  const orders = await fetchOrders();
+  const order = orders.find((o: any) => o.orderId.toUpperCase() === query || o.trackingNumber.toUpperCase() === query);
   if (!order) {
     res.status(404).json({ error: 'Order not found' });
     return;
@@ -86,22 +133,54 @@ router.get('/orders/:id', (req: Request, res: Response) => {
   res.json(order);
 });
 
-router.post('/orders/:id/refund', (req: Request, res: Response) => {
-  const query = req.params.id.toUpperCase();
-  const index = ordersDb.findIndex(o => o.orderId.toUpperCase() === query);
-  if (index === -1) {
-    res.status(404).json({ error: 'Order not found' });
+router.get('/customers/:email', async (req: Request, res: Response) => {
+  const customer = await fetchCustomerProfile(req.params.email);
+  if (!customer) {
+    res.status(404).json({ error: 'Customer profile not found' });
+    return;
+  }
+  res.json(customer);
+});
+
+router.get('/knowledge-base/search', async (req: Request, res: Response) => {
+  const query = String(req.query.q || '');
+  if (!query.trim()) {
+    res.json([]);
     return;
   }
 
-  ordersDb[index] = {
-    ...ordersDb[index],
-    status: 'Refunded',
-    refundProcessed: true,
-    refundAmount: ordersDb[index].total
-  };
+  const result = await searchKnowledgeBase(query);
+  res.json(result);
+});
 
-  res.json({ success: true, order: ordersDb[index] });
+router.post('/handoff/escalate', async (req: Request, res: Response) => {
+  const summary = buildEscalationSummary({
+    customerName: req.body.customerName,
+    email: req.body.email,
+    channel: req.body.channel || 'Live Chat',
+    issueType: req.body.issueType || 'General support',
+    sentiment: req.body.sentiment || 'Neutral',
+    priority: req.body.priority || 'Medium',
+    summary: req.body.summary || 'Manual escalation requested by agent.',
+    history: req.body.history || [],
+  });
+
+  res.json({
+    success: true,
+    message: 'Case transferred to a human specialist',
+    handoff: summary,
+  });
+});
+
+router.get('/health', async (_req: Request, res: Response) => {
+  const status = await getSqlStatus();
+  res.json({
+    status: status.connected ? 'healthy' : 'degraded',
+    service: 'AURA Call Center API',
+    database: status,
+    version: '1.1.0',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 export default router;

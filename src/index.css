@@ -1,1 +1,126 @@
 @import "tailwindcss";
+
+@theme {
+  --color-slate-50: #f8f4ee;
+  --color-slate-100: #f3ecdf;
+  --color-slate-200: #e8dfd1;
+  --color-slate-300: #cab99c;
+  --color-slate-400: #a38e6d;
+  --color-slate-500: #7b6853;
+  --color-slate-600: #5d4f40;
+  --color-slate-700: #4a4038;
+  --color-slate-800: #372f2a;
+  --color-slate-900: #2a241d;
+  --color-slate-950: #1f1b17;
+
+  --color-indigo-50: #f3f4ec;
+  --color-indigo-100: #e7ecda;
+  --color-indigo-200: #d5e0be;
+  --color-indigo-300: #a9b988;
+  --color-indigo-400: #7e9163;
+  --color-indigo-500: #64774f;
+  --color-indigo-600: #51683d;
+  --color-indigo-700: #425532;
+  --color-indigo-800: #35462b;
+  --color-indigo-900: #2a3523;
+  --color-indigo-950: #212a1d;
+
+  --color-emerald-50: #f0f8ef;
+  --color-emerald-100: #dfeedd;
+  --color-emerald-200: #cde4cc;
+  --color-emerald-300: #8eb288;
+  --color-emerald-400: #6d976d;
+  --color-emerald-500: #517a59;
+  --color-emerald-600: #3f6848;
+  --color-emerald-700: #32553a;
+  --color-emerald-800: #29432d;
+  --color-emerald-900: #223626;
+  --color-emerald-950: #1d2b22;
+
+  --color-amber-50: #fff8ed;
+  --color-amber-100: #f7ebd0;
+  --color-amber-200: #f0d59d;
+  --color-amber-300: #d7a75d;
+  --color-amber-400: #c88e3b;
+  --color-amber-500: #b8742f;
+  --color-amber-600: #9d5d22;
+  --color-amber-700: #7f491b;
+  --color-amber-800: #663b1a;
+  --color-amber-900: #4f2f1b;
+  --color-amber-950: #382617;
+
+  --color-rose-50: #fff3ee;
+  --color-rose-100: #f9dfd8;
+  --color-rose-200: #f2bca8;
+  --color-rose-300: #d98a60;
+  --color-rose-400: #c76a4a;
+  --color-rose-500: #b25538;
+  --color-rose-600: #8d402d;
+  --color-rose-700: #713122;
+  --color-rose-800: #5c2a22;
+  --color-rose-900: #442420;
+  --color-rose-950: #2d1e1b;
+
+  --color-sky-50: #eef8f4;
+  --color-sky-100: #d9efe8;
+  --color-sky-200: #b9e1d7;
+  --color-sky-300: #7bb6a0;
+  --color-sky-400: #4e9888;
+  --color-sky-500: #3a7d72;
+  --color-sky-600: #2f685f;
+  --color-sky-700: #285552;
+  --color-sky-800: #214549;
+  --color-sky-900: #1a363b;
+  --color-sky-950: #152a2d;
+}
+
+:root {
+  font-family: Inter, "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #2d261f;
+  background: #f5efe6;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  background: #f5efe6;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f8f3ec 0%, #f3eee6 100%);
+  color: #2d261f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(126, 145, 99, 0.14);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(109, 151, 109, 0.55);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(81, 122, 89, 0.8);
+}
+
+#root {
+  min-height: 100vh;
+  background: transparent;
+}

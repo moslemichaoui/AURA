@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import { KnowledgeBaseConfig, OrderRecord, TicketMetadata } from '../src/types';
+import { CRMCustomerProfile, KnowledgeBaseConfig, OrderRecord, TicketMetadata } from '../src/types';
 
 // Shared server-side Gemini client with required User-Agent
 const getAiClient = () => {
@@ -12,6 +12,21 @@ const getAiClient = () => {
       },
     },
   });
+};
+
+export type CustomerLanguage = 'en' | 'fr' | 'ar' | 'es';
+
+export const detectCustomerLanguage = (input: string): CustomerLanguage => {
+  const text = input || '';
+  if (/[àâçéèêëîïôûùüÿœæñ]/.test(text) || /\b(bonjour|salut|merci|commande|livraison|retour|remboursement|ticket|s'il vous plaît|délai|répondre|réservation|garantie)\b/i.test(text)) {
+    return 'fr';
+  }
+
+  if (/[\u0600-\u06FF]/.test(text) || /\b(salam|marhba|3asslama|3aychek|mte3|mta3|wakt|kolchi|besh|y3ni|wajeb|flous|trak|taw|el)\b/i.test(text)) {
+    return 'ar';
+  }
+
+  return 'en';
 };
 
 export interface GenerateAuraParams {
@@ -27,11 +42,13 @@ export interface GenerateAuraParams {
     email?: string;
     orderId?: string;
   };
+  language?: CustomerLanguage;
 }
 
 export const buildAuraSystemInstruction = (
   kbConfig: KnowledgeBaseConfig,
-  knownOrders: OrderRecord[] = []
+  knownOrders: OrderRecord[] = [],
+  responseLanguage: CustomerLanguage = 'en'
 ): string => {
   const ordersContext = knownOrders && knownOrders.length > 0 
     ? `\n\n--- INTERNAL VERIFIED ORDER DATABASE (For lookup only) ---\n${JSON.stringify(knownOrders, null, 2)}`
@@ -41,6 +58,8 @@ export const buildAuraSystemInstruction = (
     ? `\n\n--- ADDITIONAL OFFICIAL KNOWLEDGE BASE ARTICLES ---\n` +
       kbConfig.customArticles.map(a => `• [${a.category}] ${a.title}:\n  ${a.content}`).join('\n\n')
     : '';
+
+  const languageName = responseLanguage === 'fr' ? 'French' : responseLanguage === 'ar' ? 'Arabic / Tunisian Derja' : 'English';
 
   return `# ROLE & PERSONALITY
 You are "Aura", an elite, highly empathetic, and solution-oriented Senior Customer Support Agent for ${kbConfig.companyName || 'Aura Premium Essentials'}.
@@ -70,7 +89,11 @@ Your primary goal is to resolve customer inquiries quickly, accurately, and prof
 3. TONE & STYLE GUIDE:
    - Concise & Scannable: Keep paragraphs under 3 lines. Use bullet points for steps.
    - Tone: Professional, courteous, warm, calm under pressure.
-   - Language: Adapt seamlessly to the language used by the customer (English, French, Arabic/Derja, Spanish, German, etc.) while maintaining high standard grammar and cultural fluency.
+   - HARD LANGUAGE LOCK: The customer-facing response MUST be written in ${languageName} only.
+   - If the customer writes in French, respond in French only.
+   - If the customer writes in Arabic / Tunisian Derja, respond in Arabic / Derja only.
+   - If the customer writes in English, respond in English only.
+   - Do not mix languages in the same answer. Use correct grammar, support terms, and cultural fluency for that language.
 
 4. DE-ESCALATION PROTOCOL:
    - If a customer is angry or aggressive:
@@ -97,7 +120,7 @@ Your primary goal is to resolve customer inquiries quickly, accurately, and prof
 For every customer message, generate a response containing TWO SECTIONS:
 
 ### 1. AGENT RESPONSE (Visible to Customer)
-Write the actual response to the customer following the Tone & Constraints guidelines.
+Write the actual response to the customer in ${languageName} only, following the Tone & Constraints guidelines.
 
 ### 2. TICKET METADATA (Internal JSON)
 At the very end of your response, output a clean JSON block inside standard markdown code fences (\`\`\`json ... \`\`\`) with the exact following structure:
@@ -171,6 +194,7 @@ function generateIntelligentFallback(params: GenerateAuraParams): {
   const rawMsg = params.customerMessage;
   const kb = params.kbConfig;
   const orders = params.knownOrders || [];
+  const preferredLanguage = params.language || detectCustomerLanguage(rawMsg);
 
   let customerResponse = '';
   let metadata: TicketMetadata = {
@@ -186,7 +210,7 @@ function generateIntelligentFallback(params: GenerateAuraParams): {
   const matchedOrder = orderIdMatch ? orders.find(o => o.orderId.toUpperCase() === orderIdMatch[0].toUpperCase()) : null;
 
   // Language detection: French
-  if (/\b(bonjour|salut|commande|renvoyer|rembours|livraison|merci|délai|garantie)\b/i.test(rawMsg)) {
+  if (preferredLanguage === 'fr' || /\b(bonjour|salut|commande|renvoyer|rembours|livraison|merci|délai|garantie)\b/i.test(rawMsg)) {
     if (matchedOrder) {
       customerResponse = `Bonjour ! Je comprends tout à fait votre demande concernant votre commande **#${matchedOrder.orderId}**.\n\nVoici les détails actuels :\n• **Statut :** ${matchedOrder.status}\n• **Transporteur :** ${matchedOrder.carrier} (\`${matchedOrder.trackingNumber}\`)\n• **Livraison estimée :** ${matchedOrder.estimatedDelivery}\n\n${matchedOrder.eligibleForRefund ? "Votre commande est bien éligible au retour sous 14 jours. Souhaitez-vous recevoir une étiquette prépayée par email ?" : "N'hésitez pas si vous avez la moindre question complémentaire !"}`;
       metadata = {
@@ -217,7 +241,7 @@ function generateIntelligentFallback(params: GenerateAuraParams): {
     }
   }
   // Language detection: Tunisian Derja / Arabic
-  else if (/\b(salam|3aychek|waktéh|lyoum|fama|mte3i|mta3|tousel|colis|flous)\b/i.test(rawMsg)) {
+  else if (preferredLanguage === 'ar' || /\b(salam|3aychek|waktéh|lyoum|fama|mte3i|mta3|tousel|colis|flous)\b/i.test(rawMsg)) {
     if (matchedOrder) {
       customerResponse = `3asslema w marhba bik! Nefhmek mlih w hanou thabbetlek f el commande mte3ek **#${matchedOrder.orderId}**:\n\n• **L'état mta3ha :** ${matchedOrder.status}\n• **Transporteur :** ${matchedOrder.carrier} (\`${matchedOrder.trackingNumber}\`)\n• **Wakt el wousoul el mo9ader :** ${matchedOrder.estimatedDelivery}\n\nKen t7eb ay ma3louma o5ra walla suivi direct, ena houni bch n3awnek!`;
       metadata = {
@@ -325,9 +349,15 @@ function generateIntelligentFallback(params: GenerateAuraParams): {
   };
 }
 
-export async function generateAuraResponse(params: GenerateAuraParams) {
+export async function generateAuraResponse(params: GenerateAuraParams): Promise<{
+  rawText: string;
+  customerResponse: string;
+  metadata: TicketMetadata;
+  customerProfile?: CRMCustomerProfile | null;
+}> {
   const modelsToTry = ['gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
-  const systemInstruction = buildAuraSystemInstruction(params.kbConfig, params.knownOrders);
+  const responseLanguage = params.language || detectCustomerLanguage(params.customerMessage);
+  const systemInstruction = buildAuraSystemInstruction(params.kbConfig, params.knownOrders, responseLanguage);
 
   const contents = params.conversationHistory.map(h => ({
     role: h.role,
@@ -358,7 +388,8 @@ export async function generateAuraResponse(params: GenerateAuraParams) {
         return {
           rawText,
           customerResponse: parsed.customerResponse,
-          metadata: parsed.metadata
+          metadata: parsed.metadata,
+          customerProfile: undefined,
         };
       }
     } catch (err: any) {
@@ -368,12 +399,16 @@ export async function generateAuraResponse(params: GenerateAuraParams) {
   }
 
   // Graceful high-fidelity intelligent fallback engine
-  return generateIntelligentFallback(params);
+  return {
+    ...generateIntelligentFallback(params),
+    customerProfile: undefined,
+  };
 }
 
 export async function* generateAuraStream(params: GenerateAuraParams) {
   const modelsToTry = ['gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
-  const systemInstruction = buildAuraSystemInstruction(params.kbConfig, params.knownOrders);
+  const responseLanguage = params.language || detectCustomerLanguage(params.customerMessage);
+  const systemInstruction = buildAuraSystemInstruction(params.kbConfig, params.knownOrders, responseLanguage);
 
   const contents = params.conversationHistory.map(h => ({
     role: h.role,

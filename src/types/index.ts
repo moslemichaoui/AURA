@@ -4,11 +4,32 @@ export type PriorityType = 'Low' | 'Medium' | 'High' | 'Urgent';
 
 export type SentimentType = 'Positive' | 'Neutral' | 'Negative' | 'Frustrated';
 
+export type ChannelType = 'Live Chat' | 'Call Center Transcript' | 'Web Chat' | 'WhatsApp' | 'SMS' | 'Email' | 'Phone';
+
+export type LanguageCode = 'en' | 'fr' | 'ar' | 'es';
+
+export const LANGUAGE_LABELS: Record<LanguageCode, string> = {
+  en: 'English',
+  fr: 'French',
+  ar: 'Arabic / Derja',
+  es: 'Spanish',
+};
+
+export type QuickActionType = 'approve_refund' | 'send_tracking' | 'download_invoice' | 'transfer_call' | 'escalate' | 'view_account' | 'process_return';
+
 export type ActionRequiredType = 
   | 'Awaiting Customer Reply'
   | 'Escalate to Human'
   | 'Resolved'
   | 'Refund Requested';
+
+export interface QuickAction {
+  id: QuickActionType;
+  label: string;
+  icon?: string;
+  handler: () => void;
+  requiresConfirmation?: boolean;
+}
 
 export interface TicketMetadata {
   category: CategoryType;
@@ -16,6 +37,8 @@ export interface TicketMetadata {
   sentiment: SentimentType;
   action_required: ActionRequiredType;
   confidence_score: string; // e.g. "0.95"
+  channel?: ChannelType;
+  language?: LanguageCode;
 }
 
 export interface GuardrailCheckResult {
@@ -25,6 +48,8 @@ export interface GuardrailCheckResult {
   noHallucinationVerified: boolean;
   languageDetected: string;
 }
+
+export type ChatIntentType = 'order' | 'faq' | 'troubleshooting' | 'general';
 
 export interface ChatMessage {
   id: string;
@@ -36,10 +61,13 @@ export interface ChatMessage {
   guardrails?: GuardrailCheckResult;
   orderReference?: string;
   isStreaming?: boolean;
+  messageType?: ChatIntentType;
   feedback?: {
     rating: number;
     comment?: string;
   };
+  quickActions?: QuickAction[];
+  deliveryStatus?: 'sent' | 'delivered' | 'read';
 }
 
 export interface CustomKBArticle {
@@ -51,6 +79,16 @@ export interface CustomKBArticle {
   lastUpdated: string;
 }
 
+export interface StandardOperatingProcedure {
+  id: string;
+  title: string;
+  category: CategoryType;
+  steps: string[];
+  scenarios: string[];
+  keywords: string[];
+  priority: 'High' | 'Medium' | 'Low';
+}
+
 export interface KnowledgeBaseConfig {
   companyName: string;
   businessHours: string;
@@ -60,6 +98,9 @@ export interface KnowledgeBaseConfig {
   orderTrackingPolicy: string;
   securityGuidelines: string;
   customArticles: CustomKBArticle[];
+  sops?: StandardOperatingProcedure[];
+  supportedChannels?: ChannelType[];
+  supportedLanguages?: LanguageCode[];
 }
 
 export interface OrderItem {
@@ -89,6 +130,25 @@ export interface OrderRecord {
   refundAmount?: number;
 }
 
+export interface CRMCustomerProfile {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  lifetimeValue: number;
+  totalOrders: number;
+  loyaltyTier: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
+  joinDate: string;
+  lastPurchaseDate?: string;
+  preferredLanguage: LanguageCode;
+  preferredChannel: ChannelType;
+  recentOrders: OrderRecord[];
+  notes?: string;
+  totalSpent: number;
+  averageOrderValue: number;
+  returnRate: number; // percentage
+}
+
 export interface CustomerPersona {
   id: string;
   name: string;
@@ -100,6 +160,21 @@ export interface CustomerPersona {
   initialMessage: string;
   language: 'en' | 'fr' | 'ar_derja' | 'es' | 'de';
   orderId?: string;
+  crmProfile?: CRMCustomerProfile;
+}
+
+export interface EscalationTicket {
+  id: string;
+  originalTicketId?: string;
+  customerName: string;
+  customerEmail: string;
+  intent: string;
+  urgencyLevel: PriorityType;
+  keyIssue: string;
+  interactionHistory: ChatMessage[];
+  createdAt: string;
+  assignedAgent?: string;
+  escalationReason: string;
 }
 
 export interface TicketRecord {
@@ -122,6 +197,8 @@ export interface TicketRecord {
   internalNotes: string[];
   assignedAgent?: string;
   language: string;
+  channel?: ChannelType;
+  escalationData?: EscalationTicket;
 }
 
 export interface SystemStats {
@@ -143,4 +220,7 @@ export interface SystemStats {
     general: number;
   };
   guardrailCompliance: number;
+  channelBreakdown?: {
+    [key in ChannelType]?: number;
+  };
 }
