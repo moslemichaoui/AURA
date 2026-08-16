@@ -1,0 +1,25 @@
+import express from 'express';
+import path from 'path';
+import dotenv from 'dotenv';
+import apiRouter from './server/apiRouter';
+
+dotenv.config();
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(express.json());
+
+// API routes
+app.use('/api', apiRouter);
+
+// Serve static assets in production
+app.use(express.static(path.join(__dirname, 'dist')));
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+});
+
+app.listen(port, () => {
+  console.log(`Aura Server running on port ${port}`);
+});

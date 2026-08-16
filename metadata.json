@@ -1,0 +1,6 @@
+{
+  "name": "Aura — AI Senior Customer Support & Operations Suite",
+  "description": "Elite empathetic Customer Support Agent and Operations Command Center with dual-output live triage, policy knowledge base, escalation management, and multi-language capabilities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
